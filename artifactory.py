@@ -1,7 +1,4 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
-DOCUMENTATION = '''
+CUMENTATION = '''
 ---
 module: artifactory
 
@@ -46,6 +43,10 @@ options:
   classifier:
     description:
       - "classifier of the artifact to download"
+  properties:
+    description:
+      - "dictionary of properties to match when selecting an artifact to download"
+    required: no
   shasum:
     description:
       - "if true, existing files on the filesystem will be compared vis sha1sum to the Artifactory artifact before downloading.  If matching, the action is skipped"
@@ -101,6 +102,7 @@ def main():
             artifactid    = dict(required=True),
             version       = dict(required=True),
             classifier    = dict(required=False),
+            properties    = dict(required=False),
             sha1sum       = dict(default=True, type='bool'),
             md5sum        = dict(default=False, type='bool'),
             url_username  = dict(required=False),
@@ -121,6 +123,7 @@ def main():
     domd5 = module.params['md5sum']
     dosha1 = module.params['sha1sum']
     filename = module.params['filename']
+    properties = module.params['properties']
 
 
     sha1 = None
@@ -129,22 +132,42 @@ def main():
     file = None
     dlfname = None
     changed = False
+    headers=None
 
     # Build API call to get the file info URI
     get_api_call = base_url + "/api/search/gavc?g=" + groupid + "&a=" + artifactid + "&v=" + version + "&repos=" + repository
     if classifier:
         get_api_call += "&c=" + classifier
+    if properties:
+      headers = { 'X-Result-Detail': 'properties'}
 
     # Do the call
-    urlget_resp, urlget_info = fetch_url(module, get_api_call)
+    urlget_resp, urlget_info = fetch_url(module, get_api_call, headers=headers)
     if urlget_info['status'] == 200:
         # Get the json fun.
         rjson = json.load(urlget_resp)
         urlget_resp.close()
+        #Check properties to select matches
+        selected_results = []
+        if properties:
+          # Loop through the results
+          for result in rjson['results']:
+            match = 0
+            for key in properties:
+              if key in result['properties']:
+                if properties[key] == result['properties'][key]:
+                  match +=1
+            if match == len(properties):
+              selected_results.append(result)
+          if len(selected_results) == 0:
+            module.fail_json(msg="No artifact matched all properties")
+        else:
+          selected_results = rjson['results']
+
         # Make sure we have a single result for now...
         # TODO Support multi artifact download based on this search
-        if len(rjson['results']) == 1:
-            artifact_url = rjson['results'][0]['uri']
+        if len(selected_results) == 1:
+            artifact_url = selected_results[0]['uri']
             artinfo_resp, artinfo_info = fetch_url(module, artifact_url)
             if artinfo_info['status'] == 200:
                 # Get the json fun.
@@ -156,8 +179,8 @@ def main():
                 artinfo_resp.close()
             else:
               module.fail_json(msg="Failed to get Artifact information. with status code %s" % (artinfo_info['status']))
-        elif len(rjson['results']) > 1:
-          module.fail_json(msg="The Artifactory search query returned more than one result, please narrow the search.  Multiple artifact download may be supported in the future")
+        elif len(selected_results) > 1:
+          module.fail_json(msg="The Artifactory search query returned more than one result, please narrow the search.  Multiple artifact download may be supported in the future", result=selected_results)
         else:
           module.fail_json(msg="The Artifactory search query returned no results.")
     else:
@@ -195,3 +218,4 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 main()
+
