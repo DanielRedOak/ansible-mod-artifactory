@@ -1,4 +1,6 @@
-CUMENTATION = '''
+#!/usr/bin/env python
+
+DOCUMENTATION = '''
 ---
 module: artifactory
 
